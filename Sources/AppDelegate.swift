@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         volume.start()
         observeWorkspace()
 
+        Log.always("launched from \(Bundle.main.bundlePath); accessibility=\(AXIsProcessTrusted())")
         if AXIsProcessTrusted() {
             startMonitoring()
         } else {
@@ -69,9 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startMonitoring() {
         updateStatusIcon(trusted: true)
         guard monitor.start() else {
+            Log.always("event tap refused — Accessibility is granted to a different copy of the app?")
             updateStatusIcon(trusted: false)
             return
         }
+        Log.always("watching: accessibility granted, event tap running")
     }
 
     private func updateStatusIcon(trusted: Bool) {
@@ -88,7 +91,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if snapshot.role == "AXDockItem" { lastDockClick = Date() }
         let front = frontmostPID
         analysis.async { [menus] in
-            guard let hint = ClickInspector.hint(for: snapshot, menus: menus, frontmostPID: front) else { return }
+            let hint = ClickInspector.hint(for: snapshot, menus: menus, frontmostPID: front)
+            Log.trace("""
+                click role=\(snapshot.role ?? "-") subrole=\(snapshot.subrole ?? "-") \
+                title=\(snapshot.title ?? "-") app=\(snapshot.appName ?? "-") \
+                → \(hint.map { "\($0.action) \($0.keysText)" } ?? "no hint")
+                """)
+            guard let hint else { return }
             HintCenter.shared.offer(hint)
         }
     }
@@ -143,13 +152,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let center = HintCenter.shared
         let trusted = AXIsProcessTrusted()
 
-        if !trusted {
-            let item = NSMenuItem(title: "Grant Accessibility access…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+        let status = "Accessibility: \(trusted ? "granted" : "NOT granted") · watching: \(monitor.isRunning ? "yes" : "no")"
+        menu.addItem(NSMenuItem(title: status, action: nil, keyEquivalent: ""))
+        if !trusted || !monitor.isRunning {
+            let item = NSMenuItem(title: "Open Accessibility settings…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
             item.target = self
             menu.addItem(item)
-            menu.addItem(NSMenuItem(title: "Shortcut Coach needs it to see your clicks", action: nil, keyEquivalent: ""))
-            menu.addItem(.separator())
+            let retry = NSMenuItem(title: "Retry now", action: #selector(retryMonitoring), keyEquivalent: "")
+            retry.target = self
+            menu.addItem(retry)
         }
+        menu.addItem(.separator())
 
         let toggle = NSMenuItem(title: "Show hints", action: #selector(toggleEnabled), keyEquivalent: "")
         toggle.target = self
@@ -233,6 +246,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func resetStats() { HintCenter.shared.resetStats() }
+
+    @objc private func retryMonitoring() {
+        monitor.stop()
+        if AXIsProcessTrusted() {
+            startMonitoring()
+        } else {
+            requestAccessibility()
+        }
+    }
 
     @objc private func showSample() {
         HUD.shared.show(Hint(action: "New Folder", keys: ["⇧", "⌘", "N"], note: "this is what a hint looks like"))
