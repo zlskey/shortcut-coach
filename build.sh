@@ -23,7 +23,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 slices=()
 for arch in $ARCHS; do
-    echo "Compiling $arch…"
+    echo "Compiling ${arch}..."   # keep it ASCII: bash 3.2 folds a following multibyte char into the name
     swiftc -O -target "$arch-apple-macos$DEPLOYMENT_TARGET" \
         -framework AppKit -framework ApplicationServices -framework CoreAudio \
         -framework AudioToolbox -framework ServiceManagement \
