@@ -1,58 +1,116 @@
 # Shortcut Coach
 
-A menu bar app that watches what you do with the mouse and, when the same thing has a
-keyboard shortcut, flashes the shortcut on screen. Like Key Promoter X, but for all of macOS.
+A macOS menu bar app that watches what you do with the mouse and, whenever the same thing
+has a keyboard shortcut, flashes the shortcut on screen.
 
-## Build & run
+```
+┌───────────────────────────────────────────────┐
+│  You clicked                                  │
+│  New Folder                        ⇧   ⌘   N  │
+└───────────────────────────────────────────────┘
+```
+
+[Key Promoter X](https://github.com/halirutan/IntelliJ-Key-Promoter-X) does this inside
+JetBrains IDEs. Shortcut Coach does it for the whole system: menus, toolbars, the Dock,
+window buttons, Finder's sidebar, the volume slider.
+
+## Install
+
+Grab `ShortcutCoach.zip` from [Releases](../../releases), unzip, and move
+**ShortcutCoach.app** to `/Applications`. The release build is ad-hoc signed and not
+notarized, so clear the download quarantine once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ShortcutCoach.app
+```
+
+Or build it yourself (needs Xcode's Swift toolchain, macOS 13+):
 
 ```bash
 ./build.sh && open build/ShortcutCoach.app
 ```
 
-Then grant **System Settings ▸ Privacy & Security ▸ Accessibility** to Shortcut Coach.
-Nothing works without it: the app reads the clicked control through the Accessibility API
-and listens for clicks through a session event tap.
+Then grant **System Settings ▸ Privacy & Security ▸ Accessibility**. Nothing works without
+it — that permission is what lets the app see clicks and ask the system what you clicked on.
 
-The build is ad-hoc signed, so macOS treats every rebuild as a new app and you have to
-re-grant Accessibility (remove the old entry with "−", add the new build). To avoid that,
-sign with a stable identity:
+> **Rebuilding?** macOS ties the Accessibility grant to the app's signature, so an ad-hoc
+> build is a new app every time and has to be re-approved. Sign with a stable identity to
+> keep the permission: `SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./build.sh`
 
-```bash
-SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./build.sh
-```
+## Privacy
+
+The app reads the control you clicked, the frontmost app's menu bar, and the system volume.
+It has no network code of any kind. The only thing written to disk is a count per hint
+(`"Copy ⌘C — 14 times"`) in `UserDefaults`, so the menu can show your most-missed shortcuts.
+No text you type, no window contents, no history.
 
 ## What it detects
 
-| You did this with the mouse | Where the shortcut comes from |
+| You did this with the mouse | The hint | How it's worked out |
+| --- | --- | --- |
+| Picked any menu bar or right-click menu item | that item's shortcut | the menu item itself (`AXMenuItemCmdChar` + modifier bits) — exact, in every app and every language |
+| Clicked a toolbar button that mirrors a menu command (Back, Share, Sidebar…) | that command's shortcut | label matched against the app's menu bar |
+| Closed, minimized or full-screened a window | ⌘W, ⌘M, ⌃⌘F | the app's own Close / Minimize / Enter Full Screen items, with those as fallbacks |
+| Clicked OK or Cancel in a dialog | ↩ / ⎋ | the window's default and cancel buttons |
+| Double-clicked a title bar | Zoom / Fill | Window ▸ Move & Resize |
+| Dragged a window to a screen edge to tile it | the real tiling shortcut | window frame before/after the drag, classified against the screen |
+| Clicked a Dock app, Mission Control, Launchpad | ⌘⇥, ⌘Space, ⌃↑, F4 | Dock item role and URL |
+| Clicked a background window | ⌘⇥ or ⌘\` | the window's `AXMain` was false at the moment of the click |
+| Clicked a tab | ⌃⇥, ⌘1–9 | parent is a tab group |
+| Clicked into a toolbar search or address field | ⌘L / ⌘F | text field with a toolbar ancestor |
+| Clicked Finder's sidebar (Downloads, Applications…) | ⌥⌘L, ⇧⌘A… | row label matched against navigation menus only |
+| Dragged across a field to select all its text | ⌘A | selection length equals the character count |
+| Scrolled all the way to the top or bottom | ⌘↑ / ⌘↓ | scrollbar hit 0.0 or 1.0 at the end of a scroll burst |
+| Dragged the volume slider in Control Center | F10 / F11 / F12 | a CoreAudio volume change that no volume key caused |
+| Switched Space by clicking in Mission Control | ⌃← / ⌃→ | Space-changed notification while the mouse was busy |
+| Hunted for an app icon to launch it | ⌘Space | app-launched notification while the mouse was busy |
+
+Most hints are read from the app's own menus rather than hardcoded, so they stay correct in
+non-English systems, in apps with custom shortcuts, and across macOS versions.
+
+Hints are deduplicated for 3 seconds and counted. The menu bar item lists your ten
+most-missed shortcuts and lets you mute any of them individually — worth doing for the
+last few rows above, which fire on things you sometimes genuinely mean to do by hand.
+
+## How it works
+
+| File | Role |
 | --- | --- |
-| Picked any menu bar or right-click menu item | the menu item itself (`AXMenuItemCmdChar` + modifiers) — exact, in any app, any language |
-| Clicked a toolbar or window button whose label matches a menu command (Back, Share, Sidebar…) | that app's menu bar, matched by label |
-| Closed / minimized / full-screened a window (traffic lights) | the app's Close / Minimize / Enter Full Screen items, falling back to ⌘W, ⌘M, ⌃⌘F |
-| Clicked OK / Cancel in a dialog | the window's default and cancel buttons → ↩ and ⎋ |
-| Clicked a Dock app, Mission Control, Launchpad | ⌘⇥, ⌘Space, ⌃↑, F4 |
-| Dragged the volume slider in Control Center | CoreAudio volume/mute changes that no volume key caused → F10/F11/F12 |
-| Clicked Spotlight in the menu bar | ⌘Space |
+| [`EventMonitor.swift`](Sources/EventMonitor.swift) | `CGEvent.tapCreate` session tap on a dedicated thread. Passive: every event is passed through untouched. |
+| [`ClickInspector.swift`](Sources/ClickInspector.swift) | Snapshot capture and the rules that turn a snapshot into a hint. |
+| [`AX.swift`](Sources/AX.swift) | Accessibility helpers, plus the per-app menu index. |
+| [`Watchers.swift`](Sources/Watchers.swift) | Scroll bursts and window-drag tiling. |
+| [`VolumeMonitor.swift`](Sources/VolumeMonitor.swift) | CoreAudio volume and mute listeners. |
+| [`HUD.swift`](Sources/HUD.swift) | One reusable click-through `NSPanel` with key caps. |
+| [`HintCenter.swift`](Sources/HintCenter.swift) | Deduplication, stats, mute list. |
 
-Hints are deduplicated (3 s), counted, and each one can be muted from the menu bar item,
-which also shows your top 10 most-missed shortcuts.
+Two details do most of the work.
 
-## Architecture
+**The clicked element is captured synchronously, inside the event tap.** A menu item stops
+existing the moment the click reaches the app, so the snapshot has to be taken while the
+event is still in flight. Everything expensive — walking an app's menu bar, matching
+labels — happens afterwards on a background queue.
 
-- `EventMonitor` — `CGEvent.tapCreate` session tap on a dedicated thread. Passive: every
-  event is passed through untouched. On mouse-up it grabs a snapshot **synchronously**,
-  because a clicked menu item stops existing the moment the click is delivered.
-- `ClickInspector` — snapshot capture (cheap AX reads, 0.15 s messaging timeout) and,
-  off the hot path, the rules that turn a snapshot into a hint.
-- `MenuIndex` — walks an app's whole menu bar and indexes titles → shortcuts, cached 30 s
-  per process, used for the "this button is also a menu command" matches.
-- `VolumeMonitor` — CoreAudio property listeners on the default output device.
-- `HUD` — one reusable click-through `NSPanel` with key caps.
-- `HintCenter` — dedupe, stats, mute list (`UserDefaults`).
+**The shortcuts are not a lookup table.** macOS already tells you: every menu item exposes
+its own key equivalent through the Accessibility API. Toolbar buttons, sidebar rows and
+window buttons are resolved by finding the matching command in the same app's menus, so the
+app knows Safari's Back button is ⌘[ without knowing anything about Safari.
 
-## Known limits
+## Limitations
 
-- Brightness and keyboard-backlight sliders have no public API to observe. Not detected.
-- Actions with no menu equivalent and no label match (dragging a window to tile it,
-  scrolling, resizing) are not detected.
-- A toolbar button whose tooltip differs from its menu wording won't match; add aliases in
-  `ClickInspector.hint(for:)` if you hit a common one.
+- Brightness and keyboard-backlight sliders can't be observed through any public API.
+- Actions with no menu equivalent and no matching label — resizing a window, dragging a file —
+  have no shortcut to suggest, and aren't detected.
+- A toolbar button whose tooltip is worded differently from its menu command won't match.
+  Add aliases in `ClickInspector.hint(for:)` if you hit a common one.
+
+## Ideas worth building
+
+- Watch the keyboard too, and auto-mute a hint once you've actually used that shortcut a
+  few times, so the app stops nagging about what you've already learned.
+- A weekly summary: which habits cost you the most keystrokes.
+- Pinch-to-zoom → ⌘+ / ⌘−.
+
+## License
+
+MIT

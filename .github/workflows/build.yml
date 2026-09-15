@@ -1,0 +1,18 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal app
+        run: ARCHS="arm64 x86_64" ./build.sh
+      - name: Verify bundle
+        run: |
+          codesign --verify --verbose build/ShortcutCoach.app
+          lipo -info build/ShortcutCoach.app/Contents/MacOS/ShortcutCoach
