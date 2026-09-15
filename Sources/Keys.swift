@@ -14,8 +14,11 @@ struct Hint: Equatable {
 
 /// Turns the raw AXMenuItemCmd* attributes into readable key caps.
 enum KeyFormatter {
-    // AXMenuItemCmdModifiers bits (Carbon kMenu*Modifier)
-    private static let shiftBit = 1, optionBit = 2, controlBit = 4, noCommandBit = 8
+    // AXMenuItemCmdModifiers bits (Carbon kMenu*Modifier), plus bit 16 for the Globe (fn)
+    // key, which macOS uses for full screen and window tiling and which is not documented
+    // anywhere: "Exit Full Screen" reports 24 (globe + no command) and "Fill" reports 28
+    // (globe + control + no command).
+    private static let shiftBit = 1, optionBit = 2, controlBit = 4, noCommandBit = 8, globeBit = 16
 
     static func keys(cmdChar: String?, virtualKey: Int?, glyph: Int?, modifiers: Int?) -> [String]? {
         var key: String?
@@ -26,6 +29,7 @@ enum KeyFormatter {
 
         let m = modifiers ?? 0
         var out: [String] = []
+        if m & globeBit != 0 { out.append("🌐") }   // Apple writes it first: "Globe–Control–F"
         if m & controlBit != 0 { out.append("⌃") }
         if m & optionBit != 0 { out.append("⌥") }
         if m & shiftBit != 0 { out.append("⇧") }

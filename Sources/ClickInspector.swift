@@ -117,8 +117,15 @@ enum ClickInspector {
     static func hint(for s: ClickSnapshot, menus: MenuIndex, frontmostPID: pid_t) -> Hint? {
         // 1. A menu item that advertises its own shortcut — the most reliable case by far.
         if s.role == kAXMenuItemRole {
-            guard s.enabled, !s.hasSubmenu, let keys = s.menuKeys, let title = s.title else { return nil }
-            return Hint(action: title, keys: keys, appName: s.appName)
+            guard s.enabled, !s.hasSubmenu, let title = s.title else { return nil }
+            if let keys = s.menuKeys {
+                return Hint(action: title, keys: keys, appName: s.appName)
+            }
+            // The green button's hover menu ("Tile Window to Left of Screen", "Exit Full
+            // Screen") shows no shortcuts, but the same commands live in the Window menu.
+            guard let alias = windowCommandAlias(title),
+                  let m = menus.lookup(pid: s.pid, titles: [alias, title], menus: ["window", "view"]) else { return nil }
+            return Hint(action: title, keys: m.keys, appName: s.appName)
         }
 
         // 2. Dock.
@@ -155,9 +162,17 @@ enum ClickInspector {
             let m = menus.lookup(pid: s.pid, titles: ["Minimize"])
             return Hint(action: "Minimize", keys: m?.keys ?? ["⌘", "M"],
                         note: "⌥⌘M minimizes every window of the app", appName: s.appName)
-        case kAXFullScreenButtonSubrole:
-            let m = menus.lookup(pid: s.pid, titles: ["Enter Full Screen", "Exit Full Screen", "Full Screen"])
-            return Hint(action: "Toggle full screen", keys: m?.keys ?? ["⌃", "⌘", "F"], appName: s.appName)
+        case kAXFullScreenButtonSubrole, "AXZoomButton":
+            // The green button is a full screen button in most apps and a zoom button in
+            // others, and either way its menu on hover offers both. Prefer full screen.
+            let m = menus.lookup(pid: s.pid, titles: ["Enter Full Screen", "Exit Full Screen", "Full Screen"],
+                                 menus: ["window", "view"])
+            // ⌘F alone is Find — a sign the modifiers were lost on the way out of the API.
+            let keys = (m?.keys == ["⌘", "F"] ? nil : m?.keys) ?? ["🌐", "F"]
+            let fill = menus.lookup(pid: s.pid, titles: ["Fill"], menus: ["window"])
+            return Hint(action: "Toggle full screen", keys: keys,
+                        note: fill.map { "Window ▸ Fill is \($0.keys.joined())" },
+                        appName: s.appName)
         case "AXMenuExtra":
             if (s.desc ?? s.title ?? "").localizedCaseInsensitiveContains("spotlight") {
                 return Hint(action: "Spotlight", keys: ["⌘", "Space"])
@@ -216,6 +231,19 @@ enum ClickInspector {
             return Hint(action: "Next window of \(s.appName ?? "this app")", keys: ["⌘", "`"], appName: s.appName)
         }
         return nil
+    }
+
+    /// "Tile Window to Left of Screen" is the Window menu's "Left". Maps the wordy titles
+    /// from the green button's hover menu onto the short ones that carry the shortcuts.
+    static func windowCommandAlias(_ title: String) -> String? {
+        var t = title
+        for prefix in ["Tile Window to ", "Move Window to ", "Tile Window ", "Move to "] {
+            if t.hasPrefix(prefix) { t.removeFirst(prefix.count) }
+        }
+        for suffix in [" Side of Screen", " of Screen", " Half of Screen", " Corner of Screen"] {
+            if t.hasSuffix(suffix) { t.removeLast(suffix.count) }
+        }
+        return t == title ? title : t
     }
 
     // MARK: window tiling

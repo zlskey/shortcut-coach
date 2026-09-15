@@ -212,6 +212,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let test = NSMenuItem(title: "Show a sample hint", action: #selector(showSample), keyEquivalent: "")
         test.target = self
         menu.addItem(test)
+        let dump = NSMenuItem(title: "Dump menu shortcuts (debug)", action: #selector(dumpMenus), keyEquivalent: "")
+        dump.target = self
+        menu.addItem(dump)
         let quit = NSMenuItem(title: "Quit Shortcut Coach", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
@@ -258,6 +261,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSample() {
         HUD.shared.show(Hint(action: "New Folder", keys: ["⇧", "⌘", "N"], note: "this is what a hint looks like"))
+    }
+
+    @objc private func dumpMenus() {
+        analysis.async {
+            let url = MenuDump.write()
+            DispatchQueue.main.async {
+                HUD.shared.show(Hint(action: url == nil ? "Dump failed" : "Wrote \(MenuDump.path.path)", keys: ["✓"]))
+            }
+        }
     }
 
     @objc private func openAccessibilitySettings() {
