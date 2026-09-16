@@ -15,44 +15,61 @@ final class EventMonitor {
 
     private let state = NSLock()
     private var downPoint: CGPoint = .zero
-    private var _lastMouseActivity = Date.distantPast
+    private var _lastClick = Date.distantPast
     private var _mouseIsDown = false
     private var _lastVolumeKey = Date.distantPast
+    private var _lastKey = Date.distantPast
+    private var _lastGesture = Date.distantPast
 
+    /// For changes that arrive without a click of their own — volume, Spaces, launches —
+    /// this is the test for "the mouse did it". A trackpad gesture or a keystroke in the
+    /// recent past means it almost certainly wasn't.
     var mouseLikelyResponsible: Bool {
         state.lock(); defer { state.unlock() }
-        return _mouseIsDown || Date().timeIntervalSince(_lastMouseActivity) < 2.5
+        let now = Date()
+        guard _mouseIsDown || now.timeIntervalSince(_lastClick) < 1.2 else { return false }
+        return now.timeIntervalSince(_lastKey) > 1.5 && now.timeIntervalSince(_lastGesture) > 2.0
     }
+
     var volumeKeyUsedRecently: Bool {
         state.lock(); defer { state.unlock() }
         return Date().timeIntervalSince(_lastVolumeKey) < 2.0
     }
 
     private static let systemDefined = CGEventType(rawValue: 14)!
+    /// NSEvent gesture types (gesture, magnify, swipe, smart magnify). Not in CGEventType,
+    /// but they do flow through a session tap.
+    private static let gestureTypes: ClosedRange<UInt32> = 29...32
 
     func start() -> Bool {
         guard !isRunning else { return true }
-        let mask: CGEventMask =
+        let mouseAndGestures: CGEventMask =
             (1 << CGEventType.leftMouseDown.rawValue) |
             (1 << CGEventType.leftMouseUp.rawValue) |
             (1 << CGEventType.rightMouseUp.rawValue) |
             (1 << CGEventType.otherMouseUp.rawValue) |
             (1 << CGEventType.leftMouseDragged.rawValue) |
             (1 << CGEventType.scrollWheel.rawValue) |
-            (1 << 14) // NX_SYSDEFINED — media keys
+            (1 << 14) |                                   // NX_SYSDEFINED — media keys
+            (29...32).reduce(0) { $0 | (1 << $1) }         // trackpad gestures
+        let withKeys = mouseAndGestures | (1 << CGEventType.keyDown.rawValue)
 
         let refcon = Unmanaged.passUnretained(self).toOpaque()
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap,
-                                          place: .headInsertEventTap,
-                                          options: .defaultTap,
-                                          eventsOfInterest: mask,
-                                          callback: { proxy, type, event, refcon in
-                                              guard let refcon else { return Unmanaged.passUnretained(event) }
-                                              let monitor = Unmanaged<EventMonitor>.fromOpaque(refcon).takeUnretainedValue()
-                                              return monitor.handle(proxy: proxy, type: type, event: event)
-                                          },
-                                          userInfo: refcon)
-        else { return false }
+        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let monitor = Unmanaged<EventMonitor>.fromOpaque(refcon).takeUnretainedValue()
+            return monitor.handle(proxy: proxy, type: type, event: event)
+        }
+
+        // Keyboard events may need Input Monitoring on top of Accessibility; if the tap is
+        // refused, fall back to watching the mouse only rather than watching nothing.
+        let tapOrNil = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                         options: .defaultTap, eventsOfInterest: withKeys,
+                                         callback: callback, userInfo: refcon)
+            ?? CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                 options: .defaultTap, eventsOfInterest: mouseAndGestures,
+                                 callback: callback, userInfo: refcon)
+        guard let tap = tapOrNil else { return false }
 
         self.tap = tap
         source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -93,16 +110,23 @@ final class EventMonitor {
             return passthrough
         }
 
+        if Self.gestureTypes.contains(type.rawValue) {
+            state.lock(); _lastGesture = Date(); state.unlock()
+            return passthrough
+        }
+
         switch type {
         case .leftMouseDown:
-            state.lock(); downPoint = event.location; _mouseIsDown = true; _lastMouseActivity = Date(); state.unlock()
+            state.lock(); downPoint = event.location; _mouseIsDown = true; _lastClick = Date(); state.unlock()
             onMouseDown?(event.location)
 
         case .leftMouseDragged:
-            state.lock(); _lastMouseActivity = Date(); state.unlock()
+            break
+
+        case .keyDown:
+            state.lock(); _lastKey = Date(); state.unlock()
 
         case .scrollWheel:
-            state.lock(); _lastMouseActivity = Date(); state.unlock()
             onScroll?(event.location)
 
         case .leftMouseUp, .rightMouseUp, .otherMouseUp:
@@ -110,7 +134,7 @@ final class EventMonitor {
             state.lock()
             let start = downPoint
             _mouseIsDown = false
-            _lastMouseActivity = Date()
+            _lastClick = Date()
             state.unlock()
             let dragged = type == .leftMouseUp && hypot(location.x - start.x, location.y - start.y) > 8
             let clicks = Int(event.getIntegerValueField(.mouseEventClickState))

@@ -55,15 +55,21 @@ No text you type, no window contents, no history.
 | Double-clicked a title bar | Zoom / Fill | Window ▸ Move & Resize |
 | Dragged a window to a screen edge to tile it | the real tiling shortcut | window frame before/after the drag, classified against the screen |
 | Clicked a Dock app, Mission Control, Launchpad | ⌘⇥, ⌘Space, ⌃↑, F4 | Dock item role and URL |
-| Clicked a background window | ⌘⇥ or ⌘\` | the window's `AXMain` was false at the moment of the click |
+| Clicked a background window *(off by default)* | ⌘⇥ or ⌘\` | the window's `AXMain` was false at the moment of the click |
 | Clicked a tab | ⌃⇥, ⌘1–9 | parent is a tab group |
 | Clicked into a toolbar search or address field | ⌘L / ⌘F | text field with a toolbar ancestor |
 | Clicked Finder's sidebar (Downloads, Applications…) | ⌥⌘L, ⇧⌘A… | row label matched against navigation menus only |
 | Dragged across a field to select all its text | ⌘A | selection length equals the character count |
 | Scrolled all the way to the top or bottom | ⌘↑ / ⌘↓ | scrollbar hit 0.0 or 1.0 at the end of a scroll burst |
 | Dragged the volume slider in Control Center | F10 / F11 / F12 | a CoreAudio volume change that no volume key caused |
-| Switched Space by clicking in Mission Control | ⌃← / ⌃→ | Space-changed notification while the mouse was busy |
-| Hunted for an app icon to launch it | ⌘Space | app-launched notification while the mouse was busy |
+| Switched Space by clicking in Mission Control *(off by default)* | ⌃← / ⌃→ | Space-changed notification while the mouse was busy |
+| Hunted for an app icon to launch it *(off by default)* | ⌘Space | app-launched notification while the mouse was busy |
+
+Three of those rows have no click of their own to inspect — they're inferred from a system
+notification plus recent mouse activity, so they can misfire when you did the same thing
+with a gesture or a shortcut. They're off until you turn on **"Also guess at Spaces,
+launches and window focus"** in the menu. The inference is also guarded: a trackpad gesture
+in the last 2 seconds, or a keystroke in the last 1.5, means the mouse didn't do it.
 
 Most hints are read from the app's own menus rather than hardcoded, so they stay correct in
 non-English systems, in apps with custom shortcuts, and across macOS versions.

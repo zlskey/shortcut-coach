@@ -29,6 +29,11 @@ struct ClickSnapshot {
     var windowIsMain: Bool?     // nil when the click wasn't inside a window
     var windowSubrole: String?
     var isTitleBar = false
+
+    // Kept so a window button's real effect can be checked once the click has landed.
+    var window: AXUIElement?
+    var windowFrame: CGRect?
+    var windowWasFullScreen = false
 }
 
 enum ClickInspector {
@@ -93,10 +98,14 @@ enum ClickInspector {
 
         // Which window did this land in, and was it already the active one?
         if let window = AX.element(el, kAXWindowAttribute) ?? AX.element(el, kAXTopLevelUIElementAttribute) {
+            s.window = window
             s.windowIsMain = AX.bool(window, kAXMainAttribute)
             s.windowSubrole = AX.string(window, kAXSubroleAttribute)
-            // A click on the title bar hits the window itself rather than any control.
-            if s.hitRole == kAXWindowRole, let frame = AX.frame(window) {
+            if greenButtonSubroles.contains(s.subrole ?? "") {
+                s.windowFrame = AX.frame(window)
+                s.windowWasFullScreen = AX.bool(window, "AXFullScreen") ?? false
+            } else if s.hitRole == kAXWindowRole, let frame = AX.frame(window) {
+                // A click on the title bar hits the window itself rather than any control.
                 s.isTitleBar = point.y - frame.minY < 40
             }
         }
@@ -114,7 +123,7 @@ enum ClickInspector {
 
     // MARK: analysis (runs off the event tap; may walk whole menu bars)
 
-    static func hint(for s: ClickSnapshot, menus: MenuIndex, frontmostPID: pid_t) -> Hint? {
+    static func hint(for s: ClickSnapshot, menus: MenuIndex, frontmostPID: pid_t, allowGuesses: Bool) -> Hint? {
         // 1. A menu item that advertises its own shortcut — the most reliable case by far.
         if s.role == kAXMenuItemRole {
             guard s.enabled, !s.hasSubmenu, let title = s.title else { return nil }
@@ -163,16 +172,10 @@ enum ClickInspector {
             return Hint(action: "Minimize", keys: m?.keys ?? ["⌘", "M"],
                         note: "⌥⌘M minimizes every window of the app", appName: s.appName)
         case kAXFullScreenButtonSubrole, "AXZoomButton":
-            // The green button is a full screen button in most apps and a zoom button in
-            // others, and either way its menu on hover offers both. Prefer full screen.
-            let m = menus.lookup(pid: s.pid, titles: ["Enter Full Screen", "Exit Full Screen", "Full Screen"],
-                                 menus: ["window", "view"])
-            // ⌘F alone is Find — a sign the modifiers were lost on the way out of the API.
-            let keys = (m?.keys == ["⌘", "F"] ? nil : m?.keys) ?? ["🌐", "F"]
-            let fill = menus.lookup(pid: s.pid, titles: ["Fill"], menus: ["window"])
-            return Hint(action: "Toggle full screen", keys: keys,
-                        note: fill.map { "Window ▸ Fill is \($0.keys.joined())" },
-                        appName: s.appName)
+            // Handled by greenButtonHint once the window has actually reacted — the same
+            // button fills, zooms or goes full screen depending on the app and on which
+            // modifiers were held, so guessing here gets it wrong.
+            return nil
         case "AXMenuExtra":
             if (s.desc ?? s.title ?? "").localizedCaseInsensitiveContains("spotlight") {
                 return Hint(action: "Spotlight", keys: ["⌘", "Space"])
@@ -222,13 +225,58 @@ enum ClickInspector {
         }
 
         // 11. Nothing specific matched — but if the click also brought a window forward,
-        //     that part of it had a shortcut.
-        if s.windowIsMain == false, s.windowSubrole == kAXStandardWindowSubrole {
+        //     that part of it had a shortcut. Off by default: clicking a window to focus it
+        //     is often exactly what you meant to do.
+        if allowGuesses, s.windowIsMain == false, s.windowSubrole == kAXStandardWindowSubrole {
             if s.pid != frontmostPID {
                 return Hint(action: "Switch to \(s.appName ?? "another app")", keys: ["⌘", "⇥"],
                             note: "hold ⌘ and tap ⇥ to pick an app")
             }
             return Hint(action: "Next window of \(s.appName ?? "this app")", keys: ["⌘", "`"], appName: s.appName)
+        }
+        return nil
+    }
+
+    static let greenButtonSubroles: Set<String> = [kAXFullScreenButtonSubrole, "AXZoomButton"]
+
+    /// Run a beat after the green button was clicked: ask the window what actually
+    /// happened to it, then name that. Full screen, Fill and Zoom all live on this button.
+    static func greenButtonHint(for s: ClickSnapshot, menus: MenuIndex) -> Hint? {
+        guard let window = s.window else { return nil }
+        let after = AX.frame(window)
+        let screen = after.flatMap(screenFrames(containing:))
+        let coversDisplay = (after != nil && screen != nil) ? after!.height >= screen!.display.height - 2 : false
+        let isFullScreen = (AX.bool(window, "AXFullScreen") ?? false) || coversDisplay
+
+        if isFullScreen != s.windowWasFullScreen {
+            // The menu item has flipped its wording by now, so accept either spelling.
+            guard let m = menus.lookup(pid: s.pid, titles: ["Exit Full Screen", "Enter Full Screen", "Full Screen"],
+                                       menus: ["window", "view"]) else { return nil }
+            return Hint(action: isFullScreen ? "Enter full screen" : "Leave full screen",
+                        keys: m.keys, appName: s.appName)
+        }
+
+        // Not a full screen toggle, so the window was resized in place.
+        guard let after, let screen, let before = s.windowFrame,
+              let tile = tileTitle(before: before, after: after, screen: screen.visible),
+              let m = menus.lookup(pid: s.pid, titles: [tile, "Zoom"], menus: ["window"]) else { return nil }
+        return Hint(action: "Move & Resize ▸ \(m.title)", keys: m.keys, appName: s.appName)
+    }
+
+    /// Screen rectangles in Accessibility coordinates (origin top left) for the display a
+    /// window sits on: `visible` excludes the menu bar and Dock, `display` is the whole screen.
+    static func screenFrames(containing frame: CGRect) -> (visible: CGRect, display: CGRect)? {
+        let screens = NSScreen.screens
+        guard let primary = screens.first(where: { $0.frame.origin == .zero }) ?? screens.first else { return nil }
+        let flip = primary.frame.height
+        func toAX(_ r: CGRect) -> CGRect { CGRect(x: r.minX, y: flip - r.maxY, width: r.width, height: r.height) }
+
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        for screen in screens {
+            let display = toAX(screen.frame)
+            if display.insetBy(dx: -2, dy: -2).contains(center) {
+                return (toAX(screen.visibleFrame), display)
+            }
         }
         return nil
     }

@@ -20,6 +20,13 @@ final class HintCenter {
         set { defaults.set(newValue, forKey: "enabled") }
     }
 
+    /// Hints for things with no click of their own to inspect — switching Spaces, launching
+    /// an app, clicking a window to focus it. They are guesses, so they stay off unless asked.
+    var guessesEnabled: Bool {
+        get { defaults.object(forKey: "guesses") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "guesses") }
+    }
+
     var stats: [String: HintStat] {
         get {
             guard let data = defaults.data(forKey: "stats"),

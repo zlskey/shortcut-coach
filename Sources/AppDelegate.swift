@@ -89,9 +89,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         drags.mouseUp(dragged: snapshot.dragged)
         guard snapshot.pid != ownPID, HintCenter.shared.isEnabled else { return }
         if snapshot.role == "AXDockItem" { lastDockClick = Date() }
+        if !snapshot.dragged, ClickInspector.greenButtonSubroles.contains(snapshot.subrole ?? "") {
+            analysis.asyncAfter(deadline: .now() + 0.8) { [menus] in   // let the window react first
+                guard let hint = ClickInspector.greenButtonHint(for: snapshot, menus: menus) else { return }
+                HintCenter.shared.offer(hint)
+            }
+            return
+        }
+
         let front = frontmostPID
+        let allowGuesses = HintCenter.shared.guessesEnabled
         analysis.async { [menus] in
-            let hint = ClickInspector.hint(for: snapshot, menus: menus, frontmostPID: front)
+            let hint = ClickInspector.hint(for: snapshot, menus: menus, frontmostPID: front, allowGuesses: allowGuesses)
             Log.trace("""
                 click role=\(snapshot.role ?? "-") subrole=\(snapshot.subrole ?? "-") \
                 title=\(snapshot.title ?? "-") app=\(snapshot.appName ?? "-") \
@@ -114,13 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self, self.monitor.mouseLikelyResponsible else { return }
+            guard let self, HintCenter.shared.guessesEnabled, self.monitor.mouseLikelyResponsible else { return }
             HintCenter.shared.offer(Hint(action: "Switch Spaces", keys: ["⌃", "→"],
                                          note: "⌃← and ⌃→ move between Spaces"))
         }
 
         center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self, self.monitor.mouseLikelyResponsible,
+            guard let self, HintCenter.shared.guessesEnabled, self.monitor.mouseLikelyResponsible,
                   Date().timeIntervalSince(self.lastDockClick) > 3,
                   let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.activationPolicy == .regular, let name = app.localizedName else { return }
@@ -168,6 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.target = self
         toggle.state = center.isEnabled ? .on : .off
         menu.addItem(toggle)
+
+        let guesses = NSMenuItem(title: "Also guess at Spaces, launches and window focus",
+                                 action: #selector(toggleGuesses), keyEquivalent: "")
+        guesses.target = self
+        guesses.state = center.guessesEnabled ? .on : .off
+        guesses.toolTip = "These have no click of their own to inspect, so they are inferred and can misfire."
+        menu.addItem(guesses)
 
         let positionItem = NSMenuItem(title: "Hint position", action: nil, keyEquivalent: "")
         let positionMenu = NSMenu()
@@ -222,6 +238,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleEnabled() {
         HintCenter.shared.isEnabled.toggle()
         if !HintCenter.shared.isEnabled { HUD.shared.hide() }
+    }
+
+    @objc private func toggleGuesses() {
+        HintCenter.shared.guessesEnabled.toggle()
     }
 
     @objc private func setPosition(_ sender: NSMenuItem) {

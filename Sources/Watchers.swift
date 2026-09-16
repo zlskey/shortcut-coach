@@ -79,7 +79,7 @@ final class WindowDragWatcher {
         queue.asyncAfter(deadline: .now() + 0.7) { [self] in   // let the tiling animation settle
             defer { window = nil; frameBefore = nil }
             guard dragged, let window, let before = frameBefore, let after = AX.frame(window) else { return }
-            guard let screen = Self.screenFrame(containing: after),
+            guard let screen = ClickInspector.screenFrames(containing: after)?.visible,
                   let tile = ClickInspector.tileTitle(before: before, after: after, screen: screen),
                   let command = menus.lookup(pid: pid, titles: [tile], menus: ["window"]) else { return }
             onHint?(Hint(action: "Move & Resize ▸ \(command.title)", keys: command.keys,
@@ -87,17 +87,4 @@ final class WindowDragWatcher {
         }
     }
 
-    /// Screen visible frame in Accessibility coordinates (origin top left).
-    private static func screenFrame(containing frame: CGRect) -> CGRect? {
-        let screens = NSScreen.screens
-        guard let primary = screens.first(where: { $0.frame.origin == .zero }) ?? screens.first else { return nil }
-        let flip = primary.frame.height
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        for screen in screens {
-            let visible = screen.visibleFrame
-            let ax = CGRect(x: visible.minX, y: flip - visible.maxY, width: visible.width, height: visible.height)
-            if ax.insetBy(dx: -2, dy: -2).contains(center) { return ax }
-        }
-        return nil
-    }
 }
