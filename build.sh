@@ -45,6 +45,11 @@ if [ -n "${VERSION:-}" ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
 fi
 
-codesign --force --options runtime --identifier com.shortcutcoach.app --sign "$IDENTITY" "$APP"
+# A secure timestamp is required for notarization, and impossible when signing ad-hoc.
+timestamp=(--timestamp)
+[ "$IDENTITY" = "-" ] && timestamp=(--timestamp=none)
+
+codesign --force --options runtime "${timestamp[@]}" \
+    --identifier com.shortcutcoach.app --sign "$IDENTITY" "$APP"
 
 echo "Built $APP  ($ARCHS, signed with: $IDENTITY)"

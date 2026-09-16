@@ -17,12 +17,20 @@ window buttons, Finder's sidebar, the volume slider.
 ## Install
 
 Grab `ShortcutCoach.zip` from [Releases](../../releases), unzip, and move
-**ShortcutCoach.app** to `/Applications`. The release build is ad-hoc signed and not
-notarized, so clear the download quarantine once:
+**ShortcutCoach.app** to `/Applications`.
+
+Release builds are ad-hoc signed and not notarized, so the first launch is refused with
+*"Apple could not verify ShortcutCoach is free of malware"*. That's Gatekeeper's verdict on
+any unnotarized download, not a verdict on the app. Get past it either by clearing the
+quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/ShortcutCoach.app
 ```
+
+or by opening **System Settings ▸ Privacy & Security**, scrolling to the message about
+ShortcutCoach, and clicking **Open Anyway**. Building it yourself avoids this entirely —
+locally built apps are never quarantined.
 
 Or build it yourself (needs Xcode's Swift toolchain, macOS 13+):
 
@@ -36,6 +44,21 @@ it — that permission is what lets the app see clicks and ask the system what y
 > **Rebuilding?** macOS ties the Accessibility grant to the app's signature, so an ad-hoc
 > build is a new app every time and has to be re-approved. Sign with a stable identity to
 > keep the permission: `SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./build.sh`
+
+### Releasing without the Gatekeeper warning
+
+The release workflow notarizes automatically once these repository secrets exist, and falls
+back to ad-hoc signing when they don't. It needs a **Developer ID Application** certificate,
+which requires a paid Apple Developer Program membership — the free "Apple Development"
+certificate cannot notarize.
+
+| Secret | What it is |
+| --- | --- |
+| `DEVELOPER_ID_CERT_P12` | the certificate exported from Keychain Access as .p12, then `base64 -i cert.p12 \| pbcopy` |
+| `DEVELOPER_ID_CERT_PASSWORD` | the password you set on that export |
+| `NOTARY_APPLE_ID` | the Apple ID of the developer account |
+| `NOTARY_TEAM_ID` | the 10-character team identifier |
+| `NOTARY_APP_PASSWORD` | an app-specific password from [account.apple.com](https://account.apple.com), not the real one |
 
 ## Privacy
 
